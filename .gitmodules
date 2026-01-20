@@ -1,0 +1,3 @@
+[submodule "docs/engine_docs"]
+	path = docs/engine_docs
+	url = https://github.com/ThatOpen/engine_docs.git
