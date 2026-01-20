@@ -27,7 +27,8 @@ This application provides a comprehensive 4D BIM (Building Information Modeling)
 
 ### 💾 Data Persistence
 - **Supabase Integration**: Cloud database for storing projects, schedules, and links
-- **User Authentication**: Secure login with Supabase Auth
+- **User Authentication**: Secure login with email/password or Microsoft SSO
+- **Microsoft SSO**: Enterprise single sign-on with Azure Active Directory
 - **IFC Model Versioning**: Track model versions and maintain links across updates
 - **Weekly Updates**: Support for weekly IFC model updates while preserving links
 
@@ -70,7 +71,18 @@ EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 EXPO_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
 ```
 
-### 3. Run the Application
+### 3. (Optional) Set Up Microsoft SSO
+
+For enterprise authentication with Microsoft accounts:
+
+1. Follow the comprehensive guide in `MICROSOFT-SSO-SETUP.md`
+2. Configure Azure Active Directory application
+3. Enable Azure provider in Supabase
+4. Users can sign in with Microsoft work or personal accounts
+
+**Note**: Microsoft SSO is optional. Users can still sign in with email/password if SSO is not configured.
+
+### 4. Run the Application
 
 ```bash
 npm start

@@ -55,6 +55,31 @@ export class AuthService {
   }
 
   /**
+   * Sign in with Microsoft SSO
+   */
+  async signInWithMicrosoft(redirectTo?: string): Promise<{ error: Error | null }> {
+    try {
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'azure',
+        options: {
+          scopes: 'email openid profile',
+          redirectTo: redirectTo || window.location.origin,
+        },
+      });
+
+      if (error) {
+        return { error: new Error(error.message) };
+      }
+
+      return { error: null };
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error : new Error('Microsoft sign in failed'),
+      };
+    }
+  }
+
+  /**
    * Sign out
    */
   async signOut(): Promise<{ error: Error | null }> {

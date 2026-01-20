@@ -17,11 +17,12 @@ import {
 interface AuthPanelProps {
   onSignIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   onSignUp: (email: string, password: string) => Promise<{ error: Error | null }>;
+  onSignInWithMicrosoft: () => Promise<{ error: Error | null }>;
   isLoading?: boolean;
   style?: object;
 }
 
-export function AuthPanel({ onSignIn, onSignUp, isLoading, style }: AuthPanelProps) {
+export function AuthPanel({ onSignIn, onSignUp, onSignInWithMicrosoft, isLoading, style }: AuthPanelProps) {
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -48,6 +49,19 @@ export function AuthPanel({ onSignIn, onSignUp, isLoading, style }: AuthPanelPro
     setProcessing(false);
   };
 
+  const handleMicrosoftSignIn = async () => {
+    setProcessing(true);
+    setError(null);
+
+    const { error: authError } = await onSignInWithMicrosoft();
+
+    if (authError) {
+      setError(authError.message);
+      setProcessing(false);
+    }
+    // Note: If successful, user will be redirected to Microsoft
+  };
+
   return (
     <View style={[styles.container, style]}>
       <View style={styles.form}>
@@ -60,6 +74,33 @@ export function AuthPanel({ onSignIn, onSignUp, isLoading, style }: AuthPanelPro
             <Text style={styles.errorText}>{error}</Text>
           </View>
         )}
+
+        {/* Microsoft SSO Button */}
+        <TouchableOpacity
+          style={[styles.microsoftButton, (processing || isLoading) && styles.buttonDisabled]}
+          onPress={handleMicrosoftSignIn}
+          disabled={processing || isLoading}
+        >
+          {processing || isLoading ? (
+            <ActivityIndicator color="#ffffff" />
+          ) : (
+            <View style={styles.microsoftButtonContent}>
+              <View style={styles.microsoftIcon}>
+                <Text style={styles.microsoftIconText}>Ⓜ</Text>
+              </View>
+              <Text style={styles.microsoftButtonText}>
+                Sign in with Microsoft
+              </Text>
+            </View>
+          )}
+        </TouchableOpacity>
+
+        {/* Divider */}
+        <View style={styles.divider}>
+          <View style={styles.dividerLine} />
+          <Text style={styles.dividerText}>OR</Text>
+          <View style={styles.dividerLine} />
+        </View>
 
         <TextInput
           style={styles.input}
@@ -181,6 +222,58 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontSize: 16,
     fontWeight: '600',
+  },
+  microsoftButton: {
+    backgroundColor: '#0078d4',
+    padding: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#106ebe',
+  },
+  buttonDisabled: {
+    opacity: 0.6,
+  },
+  microsoftButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  microsoftIcon: {
+    width: 24,
+    height: 24,
+    borderRadius: 4,
+    backgroundColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  microsoftIconText: {
+    color: '#0078d4',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  microsoftButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  divider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 20,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: '#334155',
+  },
+  dividerText: {
+    color: '#64748b',
+    fontSize: 14,
+    marginHorizontal: 16,
+    fontWeight: '500',
   },
   switchButton: {
     marginTop: 16,

@@ -12,6 +12,7 @@ export interface UseAuthReturn {
   isAuthenticated: boolean;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signUp: (email: string, password: string) => Promise<{ error: Error | null }>;
+  signInWithMicrosoft: () => Promise<{ error: Error | null }>;
   signOut: () => Promise<{ error: Error | null }>;
   resetPassword: (email: string) => Promise<{ error: Error | null }>;
 }
@@ -66,6 +67,16 @@ export function useAuth(): UseAuthReturn {
     return { error };
   }, []);
 
+  const signInWithMicrosoft = useCallback(async () => {
+    setIsLoading(true);
+    const { error } = await authService.signInWithMicrosoft();
+    if (error) {
+      setIsLoading(false);
+    }
+    // Note: User will be redirected to Microsoft, so loading state persists
+    return { error };
+  }, []);
+
   const signOut = useCallback(async () => {
     setIsLoading(true);
     const { error } = await authService.signOut();
@@ -86,6 +97,7 @@ export function useAuth(): UseAuthReturn {
     isAuthenticated: !!user,
     signIn,
     signUp,
+    signInWithMicrosoft,
     signOut,
     resetPassword,
   };

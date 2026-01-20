@@ -62,7 +62,7 @@ export default function HomeScreen() {
   } = use4D();
 
   // Auth state
-  const { user, isLoading: isAuthLoading, signIn, signUp, signOut } = useAuth();
+  const { user, isLoading: isAuthLoading, signIn, signUp, signInWithMicrosoft, signOut } = useAuth();
 
   const handleContainerReady = useCallback(
     async (container: HTMLElement) => {
@@ -183,7 +183,12 @@ export default function HomeScreen() {
       {/* Auth Panel (if visible) */}
       {showAuth && !user && (
         <View style={styles.authOverlay}>
-          <AuthPanel onSignIn={signIn} onSignUp={signUp} isLoading={isAuthLoading} />
+          <AuthPanel
+            onSignIn={signIn}
+            onSignUp={signUp}
+            onSignInWithMicrosoft={signInWithMicrosoft}
+            isLoading={isAuthLoading}
+          />
         </View>
       )}
 
