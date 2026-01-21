@@ -1,0 +1,511 @@
+/**
+ * Database Service
+ *
+ * Handles all database operations for projects, tasks, and links
+ */
+
+import { supabase } from '../config/supabase';
+import type { Database } from '../types/database';
+import type { ScheduleTask, TaskEntityLink, LinkRule } from '../types/schedule';
+import { v4 as uuidv4 } from 'uuid';
+
+type Project = Database['public']['Tables']['projects']['Row'];
+type ProjectInsert = Database['public']['Tables']['projects']['Insert'];
+type Task = Database['public']['Tables']['tasks']['Row'];
+type TaskInsert = Database['public']['Tables']['tasks']['Insert'];
+type IFCModel = Database['public']['Tables']['ifc_models']['Row'];
+type IFCModelInsert = Database['public']['Tables']['ifc_models']['Insert'];
+type IFCModelUpdate = Database['public']['Tables']['ifc_models']['Update'];
+type TaskLink = Database['public']['Tables']['task_entity_links']['Row'];
+type TaskLinkInsert = Database['public']['Tables']['task_entity_links']['Insert'];
+type Rule = Database['public']['Tables']['link_rules']['Row'];
+type RuleInsert = Database['public']['Tables']['link_rules']['Insert'];
+
+export class DatabaseService {
+  /**
+   * Create a new project
+   */
+  async createProject(
+    name: string,
+    description?: string,
+    userId?: string
+  ): Promise<{ project: Project | null; error: Error | null }> {
+    try {
+      if (!userId) {
+        const { data: userData } = await supabase.auth.getUser();
+        userId = userData.user?.id;
+      }
+
+      if (!userId) {
+        return { project: null, error: new Error('User not authenticated') };
+      }
+
+      const { data, error } = await supabase
+        .from('projects')
+        .insert({
+          name,
+          description,
+          user_id: userId,
+        } as any)
+        .select()
+        .single();
+
+      if (error) {
+        return { project: null, error: new Error(error.message) };
+      }
+
+      return { project: data, error: null };
+    } catch (error) {
+      return {
+        project: null,
+        error: error instanceof Error ? error : new Error('Failed to create project'),
+      };
+    }
+  }
+
+  /**
+   * Get user projects
+   */
+  async getProjects(userId?: string): Promise<{ projects: Project[]; error: Error | null }> {
+    try {
+      if (!userId) {
+        const { data: userData } = await supabase.auth.getUser();
+        userId = userData.user?.id;
+      }
+
+      if (!userId) {
+        return { projects: [], error: new Error('User not authenticated') };
+      }
+
+      const { data, error } = await supabase
+        .from('projects')
+        .select('*')
+        .eq('user_id', userId)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        return { projects: [], error: new Error(error.message) };
+      }
+
+      return { projects: data || [], error: null };
+    } catch (error) {
+      return {
+        projects: [],
+        error: error instanceof Error ? error : new Error('Failed to get projects'),
+      };
+    }
+  }
+
+  /**
+   * Save tasks to database
+   */
+  async saveTasks(
+    projectId: string,
+    tasks: ScheduleTask[]
+  ): Promise<{ error: Error | null }> {
+    try {
+      // Flatten tasks
+      const flatTasks = this.flattenTasks(tasks);
+
+      // Convert to database format
+      const dbTasks = flatTasks.map((task) => ({
+        project_id: projectId,
+        task_id: task.taskId,
+        name: task.name,
+        start_date: task.startDate.toISOString(),
+        end_date: task.endDate.toISOString(),
+        duration: task.duration,
+        percent_complete: task.percentComplete,
+        predecessors: task.predecessors,
+        resources: task.resources,
+        notes: task.notes,
+        outline_level: task.outlineLevel,
+        outline_number: task.outlineNumber,
+      }));
+
+      // Delete existing tasks for this project
+      await supabase.from('tasks').delete().eq('project_id', projectId);
+
+      // Insert new tasks
+      const { error } = await supabase.from('tasks').insert(dbTasks as any);
+
+      if (error) {
+        return { error: new Error(error.message) };
+      }
+
+      return { error: null };
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error : new Error('Failed to save tasks'),
+      };
+    }
+  }
+
+  /**
+   * Get tasks for a project
+   */
+  async getTasks(projectId: string): Promise<{ tasks: ScheduleTask[]; error: Error | null }> {
+    try {
+      const { data, error } = await supabase
+        .from('tasks')
+        .select('*')
+        .eq('project_id', projectId)
+        .order('outline_number', { ascending: true });
+
+      if (error) {
+        return { tasks: [], error: new Error(error.message) };
+      }
+
+      // Convert from database format
+      const tasks = (data || []).map((dbTask: any) => ({
+        id: dbTask.id,
+        taskId: dbTask.task_id,
+        name: dbTask.name,
+        startDate: new Date(dbTask.start_date),
+        endDate: new Date(dbTask.end_date),
+        duration: dbTask.duration,
+        percentComplete: dbTask.percent_complete,
+        predecessors: dbTask.predecessors || [],
+        resources: dbTask.resources || [],
+        notes: dbTask.notes || undefined,
+        outlineLevel: dbTask.outline_level,
+        outlineNumber: dbTask.outline_number || undefined,
+        children: [],
+      }));
+
+      // Rebuild hierarchy
+      const hierarchicalTasks = this.buildTaskHierarchy(tasks);
+
+      return { tasks: hierarchicalTasks, error: null };
+    } catch (error) {
+      return {
+        tasks: [],
+        error: error instanceof Error ? error : new Error('Failed to get tasks'),
+      };
+    }
+  }
+
+  /**
+   * Save task entity links
+   */
+  async saveTaskLinks(
+    projectId: string,
+    ifcModelId: string,
+    links: TaskEntityLink[],
+    userId?: string
+  ): Promise<{ error: Error | null }> {
+    try {
+      if (!userId) {
+        const { data: userData } = await supabase.auth.getUser();
+        userId = userData.user?.id;
+      }
+
+      if (!userId) {
+        return { error: new Error('User not authenticated') };
+      }
+
+      const dbLinks = links.map((link) => ({
+        task_id: link.taskId,
+        project_id: projectId,
+        ifc_model_id: ifcModelId,
+        entity_global_id: link.entityGlobalId,
+        entity_express_id: link.entityExpressId,
+        entity_type: link.entityType,
+        entity_name: link.entityName,
+        link_type: link.linkType,
+        created_by: userId,
+      }));
+
+      const { error } = await supabase.from('task_entity_links').insert(dbLinks as any);
+
+      if (error) {
+        return { error: new Error(error.message) };
+      }
+
+      return { error: null };
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error : new Error('Failed to save task links'),
+      };
+    }
+  }
+
+  /**
+   * Get task entity links
+   */
+  async getTaskLinks(
+    projectId: string
+  ): Promise<{ links: TaskEntityLink[]; error: Error | null }> {
+    try {
+      const { data, error } = await supabase
+        .from('task_entity_links')
+        .select('*')
+        .eq('project_id', projectId);
+
+      if (error) {
+        return { links: [], error: new Error(error.message) };
+      }
+
+      const links = (data || []).map((dbLink: any) => ({
+        id: dbLink.id,
+        taskId: dbLink.task_id,
+        entityGlobalId: dbLink.entity_global_id,
+        entityExpressId: dbLink.entity_express_id,
+        entityType: dbLink.entity_type,
+        entityName: dbLink.entity_name || undefined,
+        linkType: dbLink.link_type,
+      }));
+
+      return { links, error: null };
+    } catch (error) {
+      return {
+        links: [],
+        error: error instanceof Error ? error : new Error('Failed to get task links'),
+      };
+    }
+  }
+
+  /**
+   * Save link rules
+   */
+  async saveLinkRules(
+    projectId: string,
+    rules: LinkRule[],
+    userId?: string
+  ): Promise<{ error: Error | null }> {
+    try {
+      if (!userId) {
+        const { data: userData } = await supabase.auth.getUser();
+        userId = userData.user?.id;
+      }
+
+      if (!userId) {
+        return { error: new Error('User not authenticated') };
+      }
+
+      const dbRules = rules.map((rule) => ({
+        project_id: projectId,
+        task_id: rule.taskId,
+        rule_type: rule.ruleType,
+        rule_config: rule.ruleConfig,
+        is_active: rule.isActive,
+        created_by: userId,
+      }));
+
+      const { error } = await supabase.from('link_rules').insert(dbRules as any);
+
+      if (error) {
+        return { error: new Error(error.message) };
+      }
+
+      return { error: null };
+    } catch (error) {
+      return {
+        error: error instanceof Error ? error : new Error('Failed to save link rules'),
+      };
+    }
+  }
+
+  /**
+   * Get link rules
+   */
+  async getLinkRules(projectId: string): Promise<{ rules: LinkRule[]; error: Error | null }> {
+    try {
+      const { data, error } = await supabase
+        .from('link_rules')
+        .select('*')
+        .eq('project_id', projectId);
+
+      if (error) {
+        return { rules: [], error: new Error(error.message) };
+      }
+
+      const rules = (data || []).map((dbRule: any) => ({
+        id: dbRule.id,
+        taskId: dbRule.task_id,
+        ruleType: dbRule.rule_type,
+        ruleConfig: dbRule.rule_config as any,
+        isActive: dbRule.is_active,
+      }));
+
+      return { rules, error: null };
+    } catch (error) {
+      return {
+        rules: [],
+        error: error instanceof Error ? error : new Error('Failed to get link rules'),
+      };
+    }
+  }
+
+  /**
+   * Register IFC model version
+   */
+  async registerIFCModel(
+    projectId: string,
+    name: string,
+    fileUrl?: string,
+    fileHash?: string,
+    userId?: string
+  ): Promise<{ model: IFCModel | null; error: Error | null }> {
+    try {
+      if (!userId) {
+        const { data: userData } = await supabase.auth.getUser();
+        userId = userData.user?.id;
+      }
+
+      if (!userId) {
+        return { model: null, error: new Error('User not authenticated') };
+      }
+
+      // Get current max version
+      const { data: existingModels } = await supabase
+        .from('ifc_models')
+        .select('version')
+        .eq('project_id', projectId)
+        .order('version', { ascending: false })
+        .limit(1);
+
+      const nextVersion = existingModels && existingModels.length > 0
+        ? (existingModels[0] as any).version + 1
+        : 1;
+
+      // Mark all other models as not current
+      const updateQuery = supabase
+        .from('ifc_models');
+      // @ts-ignore - Supabase type issue
+      await updateQuery.update({ is_current: false }).eq('project_id', projectId);
+
+      // Insert new model
+      const { data, error } = await supabase
+        .from('ifc_models')
+        .insert({
+          project_id: projectId,
+          name,
+          version: nextVersion,
+          file_url: fileUrl,
+          file_hash: fileHash,
+          is_current: true,
+          user_id: userId,
+        } as any)
+        .select()
+        .single();
+
+      if (error) {
+        return { model: null, error: new Error(error.message) };
+      }
+
+      return { model: data, error: null };
+    } catch (error) {
+      return {
+        model: null,
+        error: error instanceof Error ? error : new Error('Failed to register IFC model'),
+      };
+    }
+  }
+
+  /**
+   * Get current IFC model for project
+   */
+  async getCurrentIFCModel(
+    projectId: string
+  ): Promise<{ model: IFCModel | null; error: Error | null }> {
+    try {
+      const { data, error } = await supabase
+        .from('ifc_models')
+        .select('*')
+        .eq('project_id', projectId)
+        .eq('is_current', true)
+        .single();
+
+      if (error && error.code !== 'PGRST116') {
+        // PGRST116 = no rows returned
+        return { model: null, error: new Error(error.message) };
+      }
+
+      return { model: data, error: null };
+    } catch (error) {
+      return {
+        model: null,
+        error: error instanceof Error ? error : new Error('Failed to get current IFC model'),
+      };
+    }
+  }
+
+  /**
+   * Helper: Flatten task hierarchy
+   */
+  private flattenTasks(tasks: ScheduleTask[]): ScheduleTask[] {
+    const result: ScheduleTask[] = [];
+
+    function traverse(task: ScheduleTask) {
+      result.push(task);
+      if (task.children && task.children.length > 0) {
+        task.children.forEach(traverse);
+      }
+    }
+
+    tasks.forEach(traverse);
+    return result;
+  }
+
+  /**
+   * Helper: Build task hierarchy
+   */
+  private buildTaskHierarchy(flatTasks: ScheduleTask[]): ScheduleTask[] {
+    const taskMap = new Map<string, ScheduleTask>();
+    const rootTasks: ScheduleTask[] = [];
+
+    // Create map
+    flatTasks.forEach((task) => {
+      taskMap.set(task.taskId, { ...task, children: [] });
+    });
+
+    // Build hierarchy
+    flatTasks.forEach((task) => {
+      const taskNode = taskMap.get(task.taskId)!;
+
+      // Find parent based on outline structure
+      const parent = this.findParentTask(task, flatTasks, taskMap);
+
+      if (parent) {
+        if (!parent.children) {
+          parent.children = [];
+        }
+        parent.children.push(taskNode);
+      } else {
+        rootTasks.push(taskNode);
+      }
+    });
+
+    return rootTasks;
+  }
+
+  /**
+   * Helper: Find parent task
+   */
+  private findParentTask(
+    task: ScheduleTask,
+    allTasks: ScheduleTask[],
+    taskMap: Map<string, ScheduleTask>
+  ): ScheduleTask | null {
+    if (task.outlineLevel <= 1) {
+      return null;
+    }
+
+    for (const potentialParent of allTasks) {
+      if (
+        potentialParent.outlineLevel === task.outlineLevel - 1 &&
+        task.outlineNumber &&
+        potentialParent.outlineNumber &&
+        task.outlineNumber.startsWith(potentialParent.outlineNumber + '.')
+      ) {
+        return taskMap.get(potentialParent.taskId) || null;
+      }
+    }
+
+    return null;
+  }
+}
+
+export const databaseService = new DatabaseService();
+export default databaseService;
